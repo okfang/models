@@ -217,15 +217,19 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
     """
     params = params or {}
     total_loss, train_op, detections, export_outputs = None, None, None, None
+    # 1.确定是否是训练过程*******************************1
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
     # Make sure to set the Keras learning phase. True during training,
     # False for inference.
+    # 2.确保keras程序能够正常执行：estimator与keras的兼容性问***************************2
     tf.keras.backend.set_learning_phase(is_training)
+
+    # 3.调用model_builder.build,获取ssd框架类，在这里传入is_training构建训练图和推理图******************************3
     detection_model = detection_model_fn(
         is_training=is_training, add_summaries=(not use_tpu))
     scaffold_fn = None
-
+    # 4.***************************************
     if mode == tf.estimator.ModeKeys.TRAIN:
       labels = unstack_batch(
           labels,
@@ -260,6 +264,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
       gt_is_crowd_list = None
       if fields.InputDataFields.groundtruth_is_crowd in labels:
         gt_is_crowd_list = labels[fields.InputDataFields.groundtruth_is_crowd]
+      # 执行代码，获取groundtruth
       detection_model.provide_groundtruth(
           groundtruth_boxes_list=gt_boxes_list,
           groundtruth_classes_list=gt_classes_list,
@@ -562,8 +567,11 @@ def create_estimator_and_inputs(run_config,
   create_eval_input_fn = MODEL_BUILD_UTIL_MAP['create_eval_input_fn']
   create_predict_input_fn = MODEL_BUILD_UTIL_MAP['create_predict_input_fn']
 
+  # 1.读取配置文件并解析得到配置参数对象configs proto********************************************1
   configs = get_configs_from_pipeline_file(pipeline_config_path,
                                            config_override=config_override)
+
+  # kwargs收集用户自定义的参数，用来更新全局的configs
   kwargs.update({
       'train_steps': train_steps,
       'sample_1_of_n_eval_examples': sample_1_of_n_eval_examples
@@ -594,10 +602,11 @@ def create_estimator_and_inputs(run_config,
   if train_steps is None and train_config.num_steps != 0:
     train_steps = train_config.num_steps
 
+  # 2.得到检测模型functions:build的偏函数：ssd或faster rcnn 模型************************************2
   detection_model_fn = functools.partial(
       model_builder.build, model_config=model_config)
 
-  # Create the input functions for TRAIN/EVAL/PREDICT.
+  # 3.创建input_fn:包括训练输入以及验证输入***************************************3
   train_input_fn = create_train_input_fn(
       train_config=train_config,
       train_input_config=train_input_config,
@@ -621,7 +630,10 @@ def create_estimator_and_inputs(run_config,
   export_to_tpu = hparams.get('export_to_tpu', False)
   tf.logging.info('create_estimator_and_inputs: use_tpu %s, export_to_tpu %s',
                   use_tpu, export_to_tpu)
+
+  # 4.创建model_fn，******************************************************************4
   model_fn = model_fn_creator(detection_model_fn, configs, hparams, use_tpu)
+  # 5.构建estimator
   if use_tpu_estimator:
     estimator = tf.contrib.tpu.TPUEstimator(
         model_fn=model_fn,
@@ -635,7 +647,7 @@ def create_estimator_and_inputs(run_config,
   else:
     estimator = tf.estimator.Estimator(model_fn=model_fn, config=run_config)
 
-  # Write the as-run pipeline config to disk.
+  # 将最终的configs写入文件
   if run_config.is_chief and save_final_config:
     pipeline_config_final = create_pipeline_proto_from_configs(configs)
     config_util.save_pipeline_config(pipeline_config_final, estimator.model_dir)
