@@ -131,17 +131,18 @@ def build(preprocessor_step_config):
     ValueError: On invalid configuration.
   """
   step_type = preprocessor_step_config.WhichOneof('preprocessing_step')
-
+  #**********************************************1.如果预处理的方法在已经定义的preprocessor中，直接返回对应的函数
+  # 这些方法是很常用的
   if step_type in PREPROCESSING_FUNCTION_MAP:
     preprocessing_function = PREPROCESSING_FUNCTION_MAP[step_type]
     step_config = _get_step_config_from_proto(preprocessor_step_config,
                                               step_type)
     function_args = _get_dict_from_proto(step_config)
     return (preprocessing_function, function_args)
-
+  # *********************************************2.如果不在常用的方法中，逐个判断
   if step_type == 'random_horizontal_flip':
     config = preprocessor_step_config.random_horizontal_flip
-    return (preprocessor.random_horizontal_flip,
+    return (preprocessor.random_horizontal_flip,#函数返回处理过后 的内容。
             {
                 'keypoint_flip_permutation': tuple(
                     config.keypoint_flip_permutation),

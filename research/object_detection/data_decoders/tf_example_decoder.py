@@ -162,6 +162,7 @@ class TfExampleDecoder(data_decoder.DataDecoder):
     # TODO(rathodv): delete unused `use_display_name` argument once we change
     # other decoders to handle label maps similarly.
     del use_display_name
+    # ******************************************************************1.对应example的内容，及其类型
     self.keys_to_features = {
         'image/encoded':
             tf.FixedLenFeature((), tf.string, default_value=''),
@@ -208,6 +209,7 @@ class TfExampleDecoder(data_decoder.DataDecoder):
     }
     # We are checking `dct_method` instead of passing it directly in order to
     # ensure TF version 1.6 compatibility.
+    # *********************************************************************2.检测dct方法？？？
     if dct_method:
       image = slim_example_decoder.Image(
           image_key='image/encoded',
@@ -228,6 +230,7 @@ class TfExampleDecoder(data_decoder.DataDecoder):
           format_key='image/format',
           channels=1,
           repeated=True)
+    # *************************************************************3.读取tfrecord内容后，处理对应的内容
     self.items_to_handlers = {
         fields.InputDataFields.image:
             image,
@@ -252,6 +255,7 @@ class TfExampleDecoder(data_decoder.DataDecoder):
         fields.InputDataFields.groundtruth_weights: (
             slim_example_decoder.Tensor('image/object/weight')),
     }
+    # *************************************************4.如果需要增加额外的channels(默认不考虑，可以通过参数调控)
     if num_additional_channels > 0:
       self.keys_to_features[
           'image/additional_channels/encoded'] = tf.FixedLenFeature(
@@ -288,6 +292,7 @@ class TfExampleDecoder(data_decoder.DataDecoder):
                     self._decode_png_instance_masks))
       else:
         raise ValueError('Did not recognize the `instance_mask_type` option.')
+    # *************************************************5.以label_map的数据作为第一优先
     if label_map_proto_file:
       # If the label_map_proto is provided, try to use it in conjunction with
       # the class text, and fall back to a materialized ID.
@@ -356,27 +361,31 @@ class TfExampleDecoder(data_decoder.DataDecoder):
       fields.InputDataFields.groundtruth_image_classes - 1D uint64 of shape
         [None] containing classes for the boxes.
     """
+    # *******************************************1.使用decoder解码tf_example_string
     serialized_example = tf.reshape(tf_example_string_tensor, shape=[])
+    # 使用slim的处理tfexample的数据接口
     decoder = slim_example_decoder.TFExampleDecoder(self.keys_to_features,
                                                     self.items_to_handlers)
     keys = decoder.list_items()
     tensors = decoder.decode(serialized_example, items=keys)
     tensor_dict = dict(zip(keys, tensors))
+    #                       处理部分特殊的数据
+    # **********************************************2.调整每个tensor数据的格式
     is_crowd = fields.InputDataFields.groundtruth_is_crowd
     tensor_dict[is_crowd] = tf.cast(tensor_dict[is_crowd], dtype=tf.bool)
     tensor_dict[fields.InputDataFields.image].set_shape([None, None, 3])
     tensor_dict[fields.InputDataFields.original_image_spatial_shape] = tf.shape(
         tensor_dict[fields.InputDataFields.image])[:2]
-
+    # *********************************************3.如果有额外图像通道的话，需要进行处理
     if fields.InputDataFields.image_additional_channels in tensor_dict:
       channels = tensor_dict[fields.InputDataFields.image_additional_channels]
       channels = tf.squeeze(channels, axis=3)
       channels = tf.transpose(channels, perm=[1, 2, 0])
       tensor_dict[fields.InputDataFields.image_additional_channels] = channels
-
+    # 返回4（4个坐标）
     def default_groundtruth_weights():
       return tf.ones(
-          [tf.shape(tensor_dict[fields.InputDataFields.groundtruth_boxes])[0]],
+          [tf.shape(tensor_dict[fields.InputDataFields.groundtruth_boxes])[0]],#
           dtype=tf.float32)
 
     tensor_dict[fields.InputDataFields.groundtruth_weights] = tf.cond(

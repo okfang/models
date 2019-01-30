@@ -454,17 +454,26 @@ def create_train_input_fn(train_config, train_input_config,
                       'model_pb2.DetectionModel.')
 
     def transform_and_pad_input_data_fn(tensor_dict):
-      """Combines transform and pad operation."""
+      """
+      对tfrecord得到的tensors进行处理
+      :param tensor_dict:
+      """
+
+      # ***********************************************1.根据配置，构造数据增强的函数（注意顺序）
       data_augmentation_options = [
-          preprocessor_builder.build(step)
-          for step in train_config.data_augmentation_options
+          preprocessor_builder.build(step)#返回函数，以及参数列表
+          for step in train_config.data_augmentation_options   # preprocessor.proto定义了很多预处理的方法
       ]
+      # 整合成一个函数过程
       data_augmentation_fn = functools.partial(
           augment_input_data,
           data_augmentation_options=data_augmentation_options)
+      # **********************************************2.获取模型细节，为了使用model自身的preprocess方法
       model = model_builder.build(model_config, is_training=True)
+      # **************************************************************3.图像裁剪：应该是为了满足模型的需求
       image_resizer_config = config_util.get_image_resizer_config(model_config)
       image_resizer_fn = image_resizer_builder.build(image_resizer_config)
+      # ******************************************************4.构造转换函数的偏函数transform_data_fn，减少后面的需要的参数
       transform_data_fn = functools.partial(
           transform_input_data, model_preprocess_fn=model.preprocess,
           image_resizer_fn=image_resizer_fn,
@@ -473,19 +482,23 @@ def create_train_input_fn(train_config, train_input_config,
           merge_multiple_boxes=train_config.merge_multiple_label_boxes,
           retain_original_image=train_config.retain_original_images,
           use_bfloat16=train_config.use_bfloat16)
-
+      # *******************************************5.进行转换，并确定最终的输入形式
       tensor_dict = pad_input_data_to_static_shapes(
           tensor_dict=transform_data_fn(tensor_dict),
           max_num_boxes=train_input_config.max_number_of_boxes,
           num_classes=config_util.get_number_of_classes(model_config),
           spatial_image_shape=config_util.get_spatial_image_size(
               image_resizer_config))
+      # *****************************************6.调整真正输入到model_fn的fictures和labels
       return (_get_features_dict(tensor_dict), _get_labels_dict(tensor_dict))
 
+    #                          开始构造input_fn
+    # *******************************************************1.读取tfrecord，并构建dataset,并使用转换函数处理
     dataset = INPUT_BUILDER_UTIL_MAP['dataset_build'](
         train_input_config,
         transform_input_data_fn=transform_and_pad_input_data_fn,
         batch_size=params['batch_size'] if params else train_config.batch_size)
+    # ******************************************************2.返回dataset，输入到model_fn
     return dataset
 
   return _train_input_fn

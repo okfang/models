@@ -217,19 +217,19 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
     """
     params = params or {}
     total_loss, train_op, detections, export_outputs = None, None, None, None
-    # 1.确定是否是训练过程*******************************1
+    # ******************************************************1.确定是否是训练过程
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
     # Make sure to set the Keras learning phase. True during training,
     # False for inference.
-    # 2.确保keras程序能够正常执行：estimator与keras的兼容性问***************************2
+    # ***********************************2.确保keras程序能够正常执行：estimator与keras的兼容性问
     tf.keras.backend.set_learning_phase(is_training)
 
-    # 3.调用model_builder.build,获取ssd框架类，在这里传入is_training构建训练图和推理图******************************3
+    # ******************************3.调用model_builder.build,获取ssd框架类，在这里传入is_training构建训练图和推理图
     detection_model = detection_model_fn(
         is_training=is_training, add_summaries=(not use_tpu))
     scaffold_fn = None
-    # 4.***************************************
+    # ***************************************4.在num_boxes维度，是否去掉padding?(每张图片有n个boxes,)
     if mode == tf.estimator.ModeKeys.TRAIN:
       labels = unstack_batch(
           labels,

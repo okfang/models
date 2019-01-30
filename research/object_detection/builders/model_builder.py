@@ -228,29 +228,29 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
       model_class_map).
   """
 
-  # 1.确定类别个数***************************************1
+  # ***************************************1.确定类别个数
   num_classes = ssd_config.num_classes
 
-  # 2.更具配置，创建feature extrator：模型基础骨架*************************************2
+  # *************************************2.更具配置，创建feature extrator：模型基础骨架
   feature_extractor = _build_ssd_feature_extractor(
       feature_extractor_config=ssd_config.feature_extractor,
       freeze_batchnorm=ssd_config.freeze_batchnorm,
       is_training=is_training)
-  # 3.边框编码：********************************************************3
+  # ********************************************************3.边框编码：
   box_coder = box_coder_builder.build(ssd_config.box_coder)
-  # 4.边框匹配：**********************************************************4
+  # **********************************************************4.边框匹配：
   matcher = matcher_builder.build(ssd_config.matcher)
-  # 5.IOU计算*********************************************************5
+  # *********************************************************5.IOU计算
   region_similarity_calculator = sim_calc.build(
       ssd_config.similarity_calculator)
-  # 6.是否额外增加背景类：默认false****************************************6
+  # ****************************************6.是否额外增加背景类：默认false
   encode_background_as_zeros = ssd_config.encode_background_as_zeros
-  # 7.负样本anchors的类别权重：默认1.0****************************************7
+  # ****************************************7.负样本anchors的类别权重：默认1.0
   negative_class_weight = ssd_config.negative_class_weight
-  #8. 根据配置，构建anchors生成器,anchors的生成策略：ratios，scales, steps******************8
+  #**********************************8. 根据配置，构建anchors生成器,anchors的生成策略：ratios，scales, steps
   anchor_generator = anchor_generator_builder.build(
       ssd_config.anchor_generator)
-  #9.根据网络，生成预测器：ssd在features map上进行预测
+  #******************************9.根据网络，生成预测器：ssd在features map上进行预测
   if feature_extractor.is_keras_model:
     ssd_box_predictor = box_predictor_builder.build_keras(
         conv_hyperparams_fn=hyperparams_builder.KerasLayerHyperparams,
@@ -266,34 +266,34 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
     ssd_box_predictor = box_predictor_builder.build(
         hyperparams_builder.build, ssd_config.box_predictor, is_training,
         num_classes, ssd_config.add_background_class)
-  # 10.图片裁剪
+  # *********************************************************10.图片裁剪
   image_resizer_fn = image_resizer_builder.build(ssd_config.image_resizer)
-  # 11.预测后处理：非极大抑制方法
+  # **********************************************************11.预测后处理：非极大抑制方法
   non_max_suppression_fn, score_conversion_fn = post_processing_builder.build(
       ssd_config.post_processing)
-  # 12.构建损失函数op，用于后续生成model_fn
+  # ***********************************************************12.构建损失函数op，用于后续生成model_fn
   #
   (classification_loss, localization_loss, classification_weight,
    localization_weight, hard_example_miner, random_example_sampler,
    expected_loss_weights_fn) = losses_builder.build(ssd_config.loss)
-  #13.是否根据匹配的anchors熟练来正则化：默认true
+  #**********************************************************13.是否根据匹配的anchors熟练来正则化：默认true
   normalize_loss_by_num_matches = ssd_config.normalize_loss_by_num_matches
-  # 14.localization loss的正则化，是否根据所有生成的anchors个数？默认false
+  #******************************************************** 14.localization loss的正则化，是否根据所有生成的anchors个数？默认false
   normalize_loc_loss_by_codesize = ssd_config.normalize_loc_loss_by_codesize
-  # 15.决定参数loss的策略？是否均等化
+  #********************************************************** 15.决定参数loss的策略？是否均等化
   equalization_loss_config = ops.EqualizationLossConfig(
       weight=ssd_config.loss.equalization_loss.weight,#默认0.0
       exclude_prefixes=ssd_config.loss.equalization_loss.exclude_prefixes)
-  # 16.创建训练样本：根据IOU计算anchors和gtboxes的关系。
+  # ********************************************************16.创建训练样本：根据IOU计算anchors和gtboxes的关系。
   target_assigner_instance = target_assigner.TargetAssigner(
       region_similarity_calculator,
       matcher,
       box_coder,
       negative_class_weight=negative_class_weight)
-  # 17.获取ssd的基本框架：使用前面所有的组件，提供几个公开接口：preprocess, predict, loss, postprocess
+  #*******************17.获取ssd的基本框架：使用前面所有的组件，提供几个公开接口：preprocess, predict, loss, postprocess
   ssd_meta_arch_fn = ssd_meta_arch.SSDMetaArch
   kwargs = {}
-  # 18.返回一个ssd框架类，model_fn_creator可以使用该框架类，实现model_fn函数的TRAIN,EVAL,PREDICT过程
+  # ***********************18.返回一个ssd框架类，model_fn_creator可以使用该框架类，实现model_fn函数的TRAIN,EVAL,PREDICT过程
   return ssd_meta_arch_fn(
       is_training=is_training,
       anchor_generator=anchor_generator,
