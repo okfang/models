@@ -382,7 +382,7 @@ class TfExampleDecoder(data_decoder.DataDecoder):
       channels = tf.squeeze(channels, axis=3)
       channels = tf.transpose(channels, perm=[1, 2, 0])
       tensor_dict[fields.InputDataFields.image_additional_channels] = channels
-    # 返回4（4个坐标）
+    # 返回每个bounding_boxes的权重
     def default_groundtruth_weights():
       return tf.ones(
           [tf.shape(tensor_dict[fields.InputDataFields.groundtruth_boxes])[0]],#

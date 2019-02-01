@@ -141,6 +141,7 @@ def unstack_batch(tensor_dict, unpad_groundtruth_tensors=True):
     ValueError: If unpad_tensors is True and `tensor_dict` does not contain
       `num_groundtruth_boxes` tensor.
   """
+  # ************************************1.将每个tensor unstack,返回list
   unbatched_tensor_dict = {
       key: tf.unstack(tensor) for key, tensor in tensor_dict.items()
   }
@@ -150,6 +151,7 @@ def unstack_batch(tensor_dict, unpad_groundtruth_tensors=True):
       raise ValueError('`num_groundtruth_boxes` not found in tensor_dict. '
                        'Keys available: {}'.format(
                            unbatched_tensor_dict.keys()))
+    # ****************************************1.定义需要unstack的对象
     unbatched_unpadded_tensor_dict = {}
     unpad_keys = set([
         # List of input data fields that are padded along the num_boxes
@@ -165,17 +167,20 @@ def unstack_batch(tensor_dict, unpad_groundtruth_tensors=True):
         fields.InputDataFields.groundtruth_area,
         fields.InputDataFields.groundtruth_weights
     ]).intersection(set(unbatched_tensor_dict.keys()))
-
+    # *******************************2.对每个内容，执行unstack过程
     for key in unpad_keys:
       unpadded_tensor_list = []
-      for num_gt, padded_tensor in zip(
+      for num_gt, padded_tensor in zip(#这里已将每个boxes区分开
           unbatched_tensor_dict[fields.InputDataFields.num_groundtruth_boxes],
           unbatched_tensor_dict[key]):
+        #   获取所有的tensorshape,添加到一个list上（通过各个维度的slice,可以获取每个bboxes实例）
         tensor_shape = shape_utils.combined_static_and_dynamic_shape(
             padded_tensor)
         slice_begin = tf.zeros([len(tensor_shape)], dtype=tf.int32)
+        # 其实就是后去所有的内容
         slice_size = tf.stack(
             [num_gt] + [-1 if dim is None else dim for dim in tensor_shape[1:]])
+        #
         unpadded_tensor = tf.slice(padded_tensor, slice_begin, slice_size)
         unpadded_tensor_list.append(unpadded_tensor)
       unbatched_unpadded_tensor_dict[key] = unpadded_tensor_list
@@ -217,6 +222,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
     """
     params = params or {}
     total_loss, train_op, detections, export_outputs = None, None, None, None
+    #                     构造model_fn，estimator的主体部分
     # ******************************************************1.确定是否是训练过程
     is_training = mode == tf.estimator.ModeKeys.TRAIN
 
@@ -225,25 +231,27 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
     # ***********************************2.确保keras程序能够正常执行：estimator与keras的兼容性问
     tf.keras.backend.set_learning_phase(is_training)
 
-    # ******************************3.调用model_builder.build,获取ssd框架类，在这里传入is_training构建训练图和推理图
+    # ******************************3.调用model_builder.build,获取ssd框架类，在这里传入is_training，分别构建训练图和推理图
     detection_model = detection_model_fn(
         is_training=is_training, add_summaries=(not use_tpu))
     scaffold_fn = None
-    # ***************************************4.在num_boxes维度，是否去掉padding?(每张图片有n个boxes,)
+    # ***************************************4.训练过程中，在num_boxes维度unstack,每张图片有n boxes，需要展开
+    # 这里讲所有labels去掉batch的概念，成为boxes的序列
     if mode == tf.estimator.ModeKeys.TRAIN:
       labels = unstack_batch(
           labels,
           unpad_groundtruth_tensors=train_config.unpad_groundtruth_tensors)
+    #   ************************************6验证过程中，也需要unstack(验证过程也需要计算loss)
     elif mode == tf.estimator.ModeKeys.EVAL:
       # For evaling on train data, it is necessary to check whether groundtruth
       # must be unpadded.
-      boxes_shape = (
+      boxes_shape = (#（batch,num_box,4）
           labels[fields.InputDataFields.groundtruth_boxes].get_shape()
           .as_list())
       unpad_groundtruth_tensors = boxes_shape[1] is not None and not use_tpu
       labels = unstack_batch(
           labels, unpad_groundtruth_tensors=unpad_groundtruth_tensors)
-
+    # *********************************************7.如果是验证或者训练，需要ground_truth_list,为后续计算loss
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
       gt_boxes_list = labels[fields.InputDataFields.groundtruth_boxes]
       gt_classes_list = labels[fields.InputDataFields.groundtruth_classes]
@@ -264,7 +272,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
       gt_is_crowd_list = None
       if fields.InputDataFields.groundtruth_is_crowd in labels:
         gt_is_crowd_list = labels[fields.InputDataFields.groundtruth_is_crowd]
-      # 执行代码，获取groundtruth
+      # **************************************8将ground_truth_list存储到detection_model，用于后面访问
       detection_model.provide_groundtruth(
           groundtruth_boxes_list=gt_boxes_list,
           groundtruth_classes_list=gt_classes_list,
@@ -273,8 +281,12 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
           groundtruth_keypoints_list=gt_keypoints_list,
           groundtruth_weights_list=gt_weights_list,
           groundtruth_is_crowd_list=gt_is_crowd_list)
-
+    #
+    #                 以上是训练和验证需要准备的
+    #
+    # *********************************************9 取得输入图像
     preprocessed_images = features[fields.InputDataFields.image]
+    # *****************************************************10.执行预测（直接调用SSDMetaArch的predict方法）
     if use_tpu and train_config.use_bfloat16:
       with tf.contrib.tpu.bfloat16_scope():
         prediction_dict = detection_model.predict(
@@ -287,10 +299,11 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
       prediction_dict = detection_model.predict(
           preprocessed_images,
           features[fields.InputDataFields.true_image_shape])
+    # *****************************************11.如果是验证后者测试过程，需要进行后处理，主要是用与后续评估效果
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
-      detections = detection_model.postprocess(
+      detections = detection_model.postprocess(#编码边框，筛选边框，以及非极大抑制
           prediction_dict, features[fields.InputDataFields.true_image_shape])
-
+    # *****************************************12.根据配置，控制模型的训练过程，指定要训练的部分。
     if mode == tf.estimator.ModeKeys.TRAIN:
       if train_config.fine_tune_checkpoint and hparams.load_pretrained:
         if not train_config.fine_tune_checkpoint_type:
@@ -319,13 +332,14 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
 
           scaffold_fn = tpu_scaffold
         else:
-          tf.train.init_from_checkpoint(train_config.fine_tune_checkpoint,
+          tf.train.init_from_checkpoint(train_config.fine_tune_checkpoint,#从模型初始化。
                                         available_var_map)
-
+    # ***********************************************************13.在训练和验证阶段，计算loss,构造目标函数
     if mode in (tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL):
-      losses_dict = detection_model.loss(
+      losses_dict = detection_model.loss(#返回loss集合
           prediction_dict, features[fields.InputDataFields.true_image_shape])
       losses = [loss_tensor for loss_tensor in losses_dict.values()]
+      # 获取所有的正则项损失
       if train_config.add_regularization_loss:
         regularization_losses = detection_model.regularization_losses()
         if regularization_losses:
@@ -335,7 +349,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
           losses_dict['Loss/regularization_loss'] = regularization_loss
       total_loss = tf.add_n(losses, name='total_loss')
       losses_dict['Loss/total_loss'] = total_loss
-
+      # *************************************************14.动态修改推理图？这里不明白
       if 'graph_rewriter_config' in configs:
         graph_rewriter_fn = graph_rewriter_builder.build(
             configs['graph_rewriter_config'], is_training=is_training)
@@ -344,7 +358,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
       # TODO(rathodv): Stop creating optimizer summary vars in EVAL mode once we
       # can write learning rate summaries on TPU without host calls.
       global_step = tf.train.get_or_create_global_step()
-      training_optimizer, optimizer_summary_vars = optimizer_builder.build(
+      # **************************************************15.根据优化器的配置，构造优化器，并返回要可视化的tensor,
+      training_optimizer, optimizer_summary_vars = optimizer_builder.build(#这里可是化learning rate
           train_config.optimizer)
 
     if mode == tf.estimator.ModeKeys.TRAIN:
@@ -353,6 +368,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
             training_optimizer)
 
       # Optionally freeze some layers by setting their gradients to be zero.
+      # *******************************************************16.这里可以自定义配置需要冻结的变量
       trainable_variables = None
       include_variables = (
           train_config.update_trainable_variables
@@ -364,17 +380,20 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
           tf.trainable_variables(),
           include_patterns=include_variables,
           exclude_patterns=exclude_variables)
-
+      # ************************************************17.这里使用截断梯度
       clip_gradients_value = None
       if train_config.gradient_clipping_by_norm > 0:
         clip_gradients_value = train_config.gradient_clipping_by_norm
 
       if not use_tpu:
+        #   记录了learning rated 变化
         for var in optimizer_summary_vars:
           tf.summary.scalar(var.op.name, var)
       summaries = [] if use_tpu else None
       if train_config.summarize_gradients:
         summaries = ['gradients', 'gradient_norm', 'global_gradient_norm']
+      # *****************************************************18.构造train_op.
+      # TODO:这里使用tf.contrib.layers.optimize_loss会不会导致不能并行化
       train_op = tf.contrib.layers.optimize_loss(
           loss=total_loss,
           global_step=global_step,
@@ -385,14 +404,14 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
           variables=trainable_variables,
           summaries=summaries,
           name='')  # Preventing scope prefix on all variables.
-
+    # *******************************************************19.终于构建预测的Extimator？Exporter?
     if mode == tf.estimator.ModeKeys.PREDICT:
       exported_output = exporter_lib.add_output_tensor_nodes(detections)
       export_outputs = {
           tf.saved_model.signature_constants.PREDICT_METHOD_NAME:
               tf.estimator.export.PredictOutput(exported_output)
       }
-
+    # *******************************************************21.在验证过程，建立eval metric
     eval_metric_ops = None
     scaffold = None
     if mode == tf.estimator.ModeKeys.EVAL:
@@ -480,6 +499,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
             save_relative_paths=True)
         tf.add_to_collection(tf.GraphKeys.SAVERS, saver)
         scaffold = tf.train.Scaffold(saver=saver)
+      #     *******************************************************end.这里train和eval和predict的EstimatorSpec是一样的，取决于train_op
       return tf.estimator.EstimatorSpec(
           mode=mode,
           predictions=detections,

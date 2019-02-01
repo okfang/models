@@ -472,7 +472,7 @@ class SSDMetaArch(model.DetectionModel):
       # TODO(jonathanhuang): revisit whether to always use batch size as
       # the number of parallel iterations vs allow for dynamic batching.
       outputs = shape_utils.static_or_dynamic_map_fn(
-          self._image_resizer_fn,
+          self._image_resizer_fn,#进行裁剪
           elems=inputs,
           dtype=[tf.float32, tf.int32])
       resized_inputs = outputs[0]
@@ -691,6 +691,7 @@ class SSDMetaArch(model.DetectionModel):
       if detection_keypoints is not None:
         additional_fields = {
             fields.BoxListFields.keypoints: detection_keypoints}
+      # ******************************************1.非极大抑制
       (nmsed_boxes, nmsed_scores, nmsed_classes, nmsed_masks,
        nmsed_additional_fields, num_detections) = self._non_max_suppression_fn(
            detection_boxes,

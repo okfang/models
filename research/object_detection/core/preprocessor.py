@@ -3256,6 +3256,7 @@ def preprocess(tensor_dict,
                         their values.
     func_arg_map: mapping from preprocessing functions to arguments that they
                   expect to receive and return.
+                  每个preprocessing步骤需要接受的处理对象
     preprocess_vars_cache: PreprocessorCache object that records previously
                            performed augmentations. Updated in-place. If this
                            function is called multiple times with the same
@@ -3271,6 +3272,8 @@ def preprocess(tensor_dict,
                     do not exist in tensor_dict.
                 (c) If image in tensor_dict is not rank 4
   """
+  # *********************************************1.获取preprocessing func以及其处理对象之间的映射
+  # 通过这种映射，可以通过配置的方式，遍历处理
   if func_arg_map is None:
     func_arg_map = get_default_func_arg_map()
 
@@ -3278,12 +3281,13 @@ def preprocess(tensor_dict,
   # receive rank 3 tensor for image
   if fields.InputDataFields.image in tensor_dict:
     images = tensor_dict[fields.InputDataFields.image]
-    if len(images.get_shape()) != 4:
+    if len(images.get_shape()) != 4:#image in tensor_dict应该是4？
       raise ValueError('images in tensor_dict should be rank 4')
     image = tf.squeeze(images, axis=0)
     tensor_dict[fields.InputDataFields.image] = image
 
   # Preprocess inputs based on preprocess_options
+  # *******************************************************2.遍历预处理函数,处理其对应的输入
   for option in preprocess_options:
     func, params = option
     if func not in func_arg_map:
@@ -3302,16 +3306,19 @@ def preprocess(tensor_dict,
     if (preprocess_vars_cache is not None and
         'preprocess_vars_cache' in inspect.getargspec(func).args):
       params['preprocess_vars_cache'] = preprocess_vars_cache
+    # **********************************************************3.执行预处理操作
     results = func(*args, **params)
     if not isinstance(results, (list, tuple)):
       results = (results,)
     # Removes None args since the return values will not contain those.
     arg_names = [arg_name for arg_name in arg_names if arg_name is not None]
+    # *********************************************************4.更新tensor_dict中处理过程的量
     for res, arg_name in zip(results, arg_names):
       tensor_dict[arg_name] = res
 
   # changes the image to images (rank 3 to rank 4) to be compatible to what
   # we received in the first place
+  # ***********************************************************5.将图像重新延展为4维
   if fields.InputDataFields.image in tensor_dict:
     image = tensor_dict[fields.InputDataFields.image]
     images = tf.expand_dims(image, 0)

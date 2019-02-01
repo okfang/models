@@ -266,7 +266,7 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
     ssd_box_predictor = box_predictor_builder.build(
         hyperparams_builder.build, ssd_config.box_predictor, is_training,
         num_classes, ssd_config.add_background_class)
-  # *********************************************************10.图片裁剪
+  # *********************************************************10.图片裁剪（这里也配置一个图下裁剪）
   image_resizer_fn = image_resizer_builder.build(ssd_config.image_resizer)
   # **********************************************************11.预测后处理：非极大抑制方法
   non_max_suppression_fn, score_conversion_fn = post_processing_builder.build(

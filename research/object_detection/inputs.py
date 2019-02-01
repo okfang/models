@@ -93,6 +93,8 @@ def transform_input_data(tensor_dict,
     A dictionary keyed by fields.InputDataFields containing the tensors obtained
     after applying all the transformations.
   """
+  #                    处理输入
+  # ******************************************1.验证bboxes的合法性，以及是否使用additional_channels
   if fields.InputDataFields.groundtruth_boxes in tensor_dict:
     tensor_dict = util_ops.filter_groundtruth_with_nan_box_coordinates(
         tensor_dict)
@@ -100,23 +102,27 @@ def transform_input_data(tensor_dict,
     channels = tensor_dict[fields.InputDataFields.image_additional_channels]
     tensor_dict[fields.InputDataFields.image] = tf.concat(
         [tensor_dict[fields.InputDataFields.image], channels], axis=2)
-
+  # ******************************************2.将裁剪后的图像，保存在original_image？ 所以才要转化成int，可以用于显示
   if retain_original_image:
     tensor_dict[fields.InputDataFields.original_image] = tf.cast(
         image_resizer_fn(tensor_dict[fields.InputDataFields.image], None)[0],
         tf.uint8)
 
   # Apply data augmentation ops.
+  # *****************************************3.执行数据预处理，放回tensor_dict
   if data_augmentation_fn is not None:
     tensor_dict = data_augmentation_fn(tensor_dict)
 
   # Apply model preprocessing ops and resize instance masks.
+  # ******************************************4.使用feature_extrator的preprocess方法，某些网络有自己的预处理方法
   image = tensor_dict[fields.InputDataFields.image]
-  preprocessed_resized_image, true_image_shape = model_preprocess_fn(
-      tf.expand_dims(tf.to_float(image), axis=0))
+  # model_preprocess_fn是模型构建的预处理函数，处理的是4维图片（batch，w,h,c）
+  preprocessed_resized_image, true_image_shape = model_preprocess_fn(#model_preprocess_fn也会进行resize。ssd model包含了resier
+      tf.expand_dims(tf.to_float(image), axis=0))#拓展为四维。
   if use_bfloat16:
     preprocessed_resized_image = tf.cast(
         preprocessed_resized_image, tf.bfloat16)
+  # *****************************************5.最后还是要降维为rank3
   tensor_dict[fields.InputDataFields.image] = tf.squeeze(
       preprocessed_resized_image, axis=0)
   tensor_dict[fields.InputDataFields.true_image_shape] = tf.squeeze(
@@ -130,6 +136,7 @@ def transform_input_data(tensor_dict,
                 groundtruth_instance_masks] = resized_masks
 
   # Transform groundtruth classes to one hot encodings.
+  # ****************************************************6.one hot编码每个labels
   label_offset = 1
   zero_indexed_groundtruth_classes = tensor_dict[
       fields.InputDataFields.groundtruth_classes] - label_offset
@@ -148,7 +155,7 @@ def transform_input_data(tensor_dict,
         zero_indexed_groundtruth_classes, dtype=tf.float32)
     tensor_dict[fields.InputDataFields.groundtruth_confidences] = (
         tensor_dict[fields.InputDataFields.groundtruth_classes])
-
+  # *******************************************************7.处理是否是多标签数据？
   if merge_multiple_boxes:
     merged_boxes, merged_classes, merged_confidences, _ = (
         util_ops.merge_boxes_with_multiple_labels(
@@ -161,10 +168,11 @@ def transform_input_data(tensor_dict,
     tensor_dict[fields.InputDataFields.groundtruth_classes] = merged_classes
     tensor_dict[fields.InputDataFields.groundtruth_confidences] = (
         merged_confidences)
+  # ********************************************************8.计算有多少bbboxes
   if fields.InputDataFields.groundtruth_boxes in tensor_dict:
     tensor_dict[fields.InputDataFields.num_groundtruth_boxes] = tf.shape(
         tensor_dict[fields.InputDataFields.groundtruth_boxes])[0]
-
+  # *******************************************************9.返回最终的tensor_dict,
   return tensor_dict
 
 
@@ -188,7 +196,8 @@ def pad_input_data_to_static_shapes(tensor_dict, max_num_boxes, num_classes,
   Raises:
     ValueError: If groundtruth classes is neither rank 1 nor rank 2.
   """
-
+  #                                最终padding数据
+  # ********************************************1.获取图像的height,weight
   if not spatial_image_shape or spatial_image_shape == [-1, -1]:
     height, width = None, None
   else:
@@ -202,6 +211,8 @@ def pad_input_data_to_static_shapes(tensor_dict, max_num_boxes, num_classes,
   if fields.InputDataFields.image in tensor_dict:
     num_image_channels = tensor_dict[fields.InputDataFields
                                      .image].shape[2].value
+
+  #***************************************************1.指定所有tensor正确的shape。多余的裁剪，不足的padding
   padding_shapes = {
       # Additional channels are merged before batching.
       fields.InputDataFields.image: [
@@ -254,7 +265,7 @@ def pad_input_data_to_static_shapes(tensor_dict, max_num_boxes, num_classes,
     padding_shape = [max_num_boxes, tensor_shape[1].value]
     padding_shapes[fields.InputDataFields.
                    groundtruth_keypoint_visibilities] = padding_shape
-
+  # *************************************2.处理所有tensor_dict
   padded_tensor_dict = {}
   for tensor_name in tensor_dict:
     padded_tensor_dict[tensor_name] = shape_utils.pad_or_clip_nd(
@@ -283,6 +294,7 @@ def augment_input_data(tensor_dict, data_augmentation_options):
     A dictionary of tensors obtained by applying data augmentation ops to the
     input tensor dictionary.
   """
+  # ***********************************************1.首先拓展维度？1*H*W*C  image in tensor_dict should be rank 4
   tensor_dict[fields.InputDataFields.image] = tf.expand_dims(
       tf.to_float(tensor_dict[fields.InputDataFields.image]), 0)
 
@@ -294,13 +306,15 @@ def augment_input_data(tensor_dict, data_augmentation_options):
                            in tensor_dict)
   include_label_confidences = (fields.InputDataFields.groundtruth_confidences
                                in tensor_dict)
-  tensor_dict = preprocessor.preprocess(
+  # ***************************************2.真正使用的是preprocessor的预处理函数，该方法需要image是4维的(其实函数内又把他降为3维)
+  tensor_dict = preprocessor.preprocess(#该函数专门处理image和bboxes
       tensor_dict, data_augmentation_options,
-      func_arg_map=preprocessor.get_default_func_arg_map(
+      func_arg_map=preprocessor.get_default_func_arg_map(#该参数表示每个预处理的过程需要调整哪些内容（image和bboxes）
           include_label_weights=include_label_weights,
           include_label_confidences=include_label_confidences,
           include_instance_masks=include_instance_masks,
           include_keypoints=include_keypoints))
+  # **************************************3.处理之后，返回的image是rank4的，所以需要降维。tensor_dict最终返回的是3维，但是batch之后就是4维了
   tensor_dict[fields.InputDataFields.image] = tf.squeeze(
       tensor_dict[fields.InputDataFields.image], axis=0)
   return tensor_dict
@@ -464,7 +478,7 @@ def create_train_input_fn(train_config, train_input_config,
           preprocessor_builder.build(step)#返回函数，以及参数列表
           for step in train_config.data_augmentation_options   # preprocessor.proto定义了很多预处理的方法
       ]
-      # 整合成一个函数过程
+      # 整合成一个函数过程（将预处理方法提供给偏函数）
       data_augmentation_fn = functools.partial(
           augment_input_data,
           data_augmentation_options=data_augmentation_options)
@@ -474,6 +488,7 @@ def create_train_input_fn(train_config, train_input_config,
       image_resizer_config = config_util.get_image_resizer_config(model_config)
       image_resizer_fn = image_resizer_builder.build(image_resizer_config)
       # ******************************************************4.构造转换函数的偏函数transform_data_fn，减少后面的需要的参数
+      # 返回preprocess和reisize后的tensor_dict
       transform_data_fn = functools.partial(
           transform_input_data, model_preprocess_fn=model.preprocess,
           image_resizer_fn=image_resizer_fn,
@@ -482,10 +497,10 @@ def create_train_input_fn(train_config, train_input_config,
           merge_multiple_boxes=train_config.merge_multiple_label_boxes,
           retain_original_image=train_config.retain_original_images,
           use_bfloat16=train_config.use_bfloat16)
-      # *******************************************5.进行转换，并确定最终的输入形式
+      # *******************************************5.进行padding，并确定最终的输入形式
       tensor_dict = pad_input_data_to_static_shapes(
           tensor_dict=transform_data_fn(tensor_dict),
-          max_num_boxes=train_input_config.max_number_of_boxes,
+          max_num_boxes=train_input_config.max_number_of_boxes,#默认100,有些图片太多boxes了，
           num_classes=config_util.get_number_of_classes(model_config),
           spatial_image_shape=config_util.get_spatial_image_size(
               image_resizer_config))
@@ -494,6 +509,7 @@ def create_train_input_fn(train_config, train_input_config,
 
     #                          开始构造input_fn
     # *******************************************************1.读取tfrecord，并构建dataset,并使用转换函数处理
+    # 处理的是fetures_to_handlers部分
     dataset = INPUT_BUILDER_UTIL_MAP['dataset_build'](
         train_input_config,
         transform_input_data_fn=transform_and_pad_input_data_fn,

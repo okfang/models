@@ -71,7 +71,8 @@ def build(image_resizer_config):
   if not isinstance(image_resizer_config, image_resizer_pb2.ImageResizer):
     raise ValueError('image_resizer_config not of type '
                      'image_resizer_pb2.ImageResizer.')
-
+  #                          图像裁剪
+  # ******************************************************1.获取图像裁剪的参数（保留比例和直接裁剪成目标形状）
   image_resizer_oneof = image_resizer_config.WhichOneof('image_resizer_oneof')
   if image_resizer_oneof == 'keep_aspect_ratio_resizer':
     keep_aspect_ratio_config = image_resizer_config.keep_aspect_ratio_resizer
@@ -79,6 +80,7 @@ def build(image_resizer_config):
             keep_aspect_ratio_config.max_dimension):
       raise ValueError('min_dimension > max_dimension')
     method = _tf_resize_method(keep_aspect_ratio_config.resize_method)
+    # 保留比例裁剪需要padding(有最小像素和最大像素的约束)
     per_channel_pad_value = (0, 0, 0)
     if keep_aspect_ratio_config.per_channel_pad_value:
       per_channel_pad_value = tuple(keep_aspect_ratio_config.
@@ -92,6 +94,7 @@ def build(image_resizer_config):
         per_channel_pad_value=per_channel_pad_value)
     if not keep_aspect_ratio_config.convert_to_grayscale:
       return image_resizer_fn
+  # *****************************************************固定形状的裁剪
   elif image_resizer_oneof == 'fixed_shape_resizer':
     fixed_shape_resizer_config = image_resizer_config.fixed_shape_resizer
     method = _tf_resize_method(fixed_shape_resizer_config.resize_method)
