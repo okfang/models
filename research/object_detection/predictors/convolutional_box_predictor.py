@@ -44,7 +44,8 @@ class ConvolutionalBoxPredictor(box_predictor.BoxPredictor):
   predict in parallel branches box_encodings and
   class_predictions_with_background.
 
-  Currently this box predictor assumes that predictions are "shared" across
+  Currently this box predictor assumes that predictions are "
+  " across
   classes --- that is each anchor makes box predictions which do not depend
   on class.
   """
@@ -128,11 +129,13 @@ class ConvolutionalBoxPredictor(box_predictor.BoxPredictor):
     # The following lines create scope names to be backwards compatible with the
     # existing checkpoints.
     box_predictor_scopes = [_NoopVariableScope()]
+    # 使用多个feature layers
     if len(image_features) > 1:
       box_predictor_scopes = [
           tf.variable_scope('BoxPredictor_{}'.format(i))
           for i in range(len(image_features))
       ]
+    # ***************************************1.遍历所有的的feature map，逐个记性预测
     for (image_feature,
          num_predictions_per_location, box_predictor_scope) in zip(
              image_features, num_predictions_per_location_list,
@@ -146,6 +149,7 @@ class ConvolutionalBoxPredictor(box_predictor.BoxPredictor):
             depth = max(min(features_depth, self._max_depth), self._min_depth)
             tf.logging.info('depth of additional conv before box predictor: {}'.
                             format(depth))
+            # *************************************2.使用使用多个卷积层作为预测器（1*1）
             if depth > 0 and self._num_layers_before_predictor > 0:
               for i in range(self._num_layers_before_predictor):
                 net = slim.conv2d(

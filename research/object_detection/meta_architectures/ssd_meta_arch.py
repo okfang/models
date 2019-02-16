@@ -554,6 +554,7 @@ class SSDMetaArch(model.DetectionModel):
     """
     batchnorm_updates_collections = (None if self._inplace_batchnorm_update
                                      else tf.GraphKeys.UPDATE_OPS)
+    # ***************************************2.计算featuremaps
     if self._feature_extractor.is_keras_model:
       feature_maps = self._feature_extractor(preprocessed_inputs)
     else:
@@ -565,16 +566,19 @@ class SSDMetaArch(model.DetectionModel):
                                [preprocessed_inputs]):
           feature_maps = self._feature_extractor.extract_features(
               preprocessed_inputs)
-
+    # **************************************3.计算feature maps的形状
     feature_map_spatial_dims = self._get_feature_map_spatial_dims(
         feature_maps)
     image_shape = shape_utils.combined_static_and_dynamic_shape(
         preprocessed_inputs)
+    # *************************************4.生成所有的anchors
+    # 在模型计算anchors，将生成anchors步骤与具体使用的网络结构解耦
     self._anchors = box_list_ops.concatenate(
         self._anchor_generator.generate(
             feature_map_spatial_dims,
             im_height=image_shape[1],
             im_width=image_shape[2]))
+    # ************************************5.根据得到的feature maps进行与预测，得到预测结果
     if self._box_predictor.is_keras_model:
       predictor_results_dict = self._box_predictor(feature_maps)
     else:
@@ -584,17 +588,26 @@ class SSDMetaArch(model.DetectionModel):
                           updates_collections=batchnorm_updates_collections):
         predictor_results_dict = self._box_predictor.predict(
             feature_maps, self._anchor_generator.num_anchors_per_location())
+    # *************************************6.收集预测过程中，需要返回的结果
     predictions_dict = {
-        'preprocessed_inputs': preprocessed_inputs,
-        'feature_maps': feature_maps,
-        'anchors': self._anchors.get()
+        'preprocessed_inputs': preprocessed_inputs,#原始输入
+        'feature_maps': feature_maps,#预测得到的feature maps
+        'anchors': self._anchors.get() #预测过程中的anchors
     }
+    # *************************************7.将预测得到的结果也加入到predictions_dict
+    # predictor_results_dict格式：
+    # {"box_encodings":[[batch,num_anchors,1,4],...,[batch,num_anchors,1,4]]
+    #  ""}
+    #
     for prediction_key, prediction_list in iter(predictor_results_dict.items()):
+      # 将各个feature layer得到的预测结果，concate起来（batch,num_anchors,4/num_classes）
       prediction = tf.concat(prediction_list, axis=1)
+      # 如果是box_encodings，需要进行squeeze
       if (prediction_key == 'box_encodings' and prediction.shape.ndims == 4 and
           prediction.shape[2] == 1):
         prediction = tf.squeeze(prediction, axis=2)
       predictions_dict[prediction_key] = prediction
+    # ***********************************8.将所有预测过程中保留的结果都保存起来
     self._batched_prediction_tensor_names = [x for x in predictions_dict
                                              if x != 'anchors']
     return predictions_dict
@@ -668,30 +681,36 @@ class SSDMetaArch(model.DetectionModel):
       box_encodings = prediction_dict['box_encodings']
       box_encodings = tf.identity(box_encodings, 'raw_box_encodings')
       class_predictions = prediction_dict['class_predictions_with_background']
+      # *********************************************1.将预测的偏移量进行解码，得到预测的坐标
+      # box_encodings（batch,num_anchors,4）
       detection_boxes, detection_keypoints = self._batch_decode(box_encodings)
+      # detection_boxes(batch,num_anchors,4)
       detection_boxes = tf.identity(detection_boxes, 'raw_box_locations')
+      # detection_boxes(batch,num_anchors,1,4)
       detection_boxes = tf.expand_dims(detection_boxes, axis=2)
-
+      # **********************************************2.将预测的logits转化成概率
       detection_scores = self._score_conversion_fn(class_predictions)
       detection_scores = tf.identity(detection_scores, 'raw_box_scores')
+      # *********************************************3.将class=0除去。
       if self._add_background_class or self._explicit_background_class:
         detection_scores = tf.slice(detection_scores, [0, 0, 1], [-1, -1, -1])
       additional_fields = None
 
       batch_size = (
           shape_utils.combined_static_and_dynamic_shape(preprocessed_images)[0])
-
+      # ********************************************3.将feature map平铺，
       if 'feature_maps' in prediction_dict:
         feature_map_list = []
         for feature_map in prediction_dict['feature_maps']:
           feature_map_list.append(tf.reshape(feature_map, [batch_size, -1]))
+        # ******************************************4.得到预测box所对应的特征
         box_features = tf.concat(feature_map_list, 1)
         box_features = tf.identity(box_features, 'raw_box_features')
 
       if detection_keypoints is not None:
         additional_fields = {
             fields.BoxListFields.keypoints: detection_keypoints}
-      # ******************************************1.非极大抑制
+      # ******************************************5.非极大抑制
       (nmsed_boxes, nmsed_scores, nmsed_classes, nmsed_masks,
        nmsed_additional_fields, num_detections) = self._non_max_suppression_fn(
            detection_boxes,
@@ -700,6 +719,7 @@ class SSDMetaArch(model.DetectionModel):
                                                  true_image_shapes),
            additional_fields=additional_fields,
            masks=prediction_dict.get('mask_predictions'))
+      # ***********************************************4.得到最终的结果
       detection_dict = {
           fields.DetectionResultFields.detection_boxes: nmsed_boxes,
           fields.DetectionResultFields.detection_scores: nmsed_scores,
@@ -1083,6 +1103,7 @@ class SSDMetaArch(model.DetectionModel):
         [batch_size, num_anchors, num_keypoints, 2] containing the decoded
         keypoints if present in the input `box_encodings`, None otherwise.
     """
+    # **************************************1.将不确定的形状固定，可以统一访问
     combined_shape = shape_utils.combined_static_and_dynamic_shape(
         box_encodings)
     batch_size = combined_shape[0]

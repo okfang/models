@@ -228,15 +228,16 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
       model_class_map).
   """
 
+  #                       构建ssd框架模型
   # ***************************************1.确定类别个数
   num_classes = ssd_config.num_classes
 
-  # *************************************2.更具配置，创建feature extrator：模型基础骨架
+  # *************************************2.根据配置，创建feature extrator：模型基础骨架
   feature_extractor = _build_ssd_feature_extractor(
       feature_extractor_config=ssd_config.feature_extractor,
       freeze_batchnorm=ssd_config.freeze_batchnorm,
       is_training=is_training)
-  # ********************************************************3.边框编码：
+  # ********************************************************3.边框编码器：
   box_coder = box_coder_builder.build(ssd_config.box_coder)
   # **********************************************************4.边框匹配：
   matcher = matcher_builder.build(ssd_config.matcher)
@@ -250,7 +251,7 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
   #**********************************8. 根据配置，构建anchors生成器,anchors的生成策略：ratios，scales, steps
   anchor_generator = anchor_generator_builder.build(
       ssd_config.anchor_generator)
-  #******************************9.根据网络，生成预测器：ssd在features map上进行预测
+  #******************************9.根据网络，选择ssd_box_predictor：ssd在features map上进行预测
   if feature_extractor.is_keras_model:
     ssd_box_predictor = box_predictor_builder.build_keras(
         conv_hyperparams_fn=hyperparams_builder.KerasLayerHyperparams,
@@ -265,7 +266,7 @@ def _build_ssd_model(ssd_config, is_training, add_summaries):
   else:
     ssd_box_predictor = box_predictor_builder.build(
         hyperparams_builder.build, ssd_config.box_predictor, is_training,
-        num_classes, ssd_config.add_background_class)
+        num_classes, ssd_config.add_background_class)#add_background_class默认true
   # *********************************************************10.图片裁剪（这里也配置一个图下裁剪）
   image_resizer_fn = image_resizer_builder.build(ssd_config.image_resizer)
   # **********************************************************11.预测后处理：非极大抑制方法

@@ -749,7 +749,7 @@ def result_dict_for_batched_example(images,
     detection_classes = (
         tf.to_int64(detections[detection_fields.detection_classes]) +
         label_id_offset)
-
+  # 是否将坐标映射到绝对坐标
   if scale_to_absolute:
     output_dict[detection_fields.detection_boxes] = (
         shape_utils.static_or_dynamic_map_fn(

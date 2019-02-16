@@ -79,6 +79,7 @@ def _prepare_groundtruth_for_eval(detection_model, class_agnostic,
     class_agnostic: Boolean indicating whether detections are class agnostic.
   """
   input_data_fields = fields.InputDataFields()
+  # ***************************************1.获取groundtruth_boxes
   groundtruth_boxes = tf.stack(
       detection_model.groundtruth_lists(fields.BoxListFields.boxes))
   groundtruth_boxes_shape = tf.shape(groundtruth_boxes)
@@ -88,6 +89,7 @@ def _prepare_groundtruth_for_eval(detection_model, class_agnostic,
     groundtruth_classes_one_hot = tf.ones(
         [groundtruth_boxes_shape[0], groundtruth_boxes_shape[1], 1])
   else:
+    #   *******************************************2.对groundtruth_boxes的labels进行one_hot编码
     groundtruth_classes_one_hot = tf.stack(
         detection_model.groundtruth_lists(fields.BoxListFields.classes))
   label_id_offset = 1  # Applying label id offset (b/63711816)
@@ -299,7 +301,8 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
       prediction_dict = detection_model.predict(
           preprocessed_images,
           features[fields.InputDataFields.true_image_shape])
-    # *****************************************11.如果是验证后者测试过程，需要进行后处理，主要是用与后续评估效果
+    # prediction_dict{"box_encodings":(batch,all_num_anchors,4),"class_predictions_with_background":(bath,all_num_anchors,num_class+1)}
+    # *****************************************11.如果是验证或者测试过程，需要进行后处理，主要是用与后续评估效果
     if mode in (tf.estimator.ModeKeys.EVAL, tf.estimator.ModeKeys.PREDICT):
       detections = detection_model.postprocess(#编码边框，筛选边框，以及非极大抑制
           prediction_dict, features[fields.InputDataFields.true_image_shape])
@@ -349,7 +352,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
           losses_dict['Loss/regularization_loss'] = regularization_loss
       total_loss = tf.add_n(losses, name='total_loss')
       losses_dict['Loss/total_loss'] = total_loss
-      # *************************************************14.动态修改推理图？这里不明白
+      # *************************************************14.量化模型，在影响模型精确度的情况下，进行模型压缩。（8bit替代浮点数）
       if 'graph_rewriter_config' in configs:
         graph_rewriter_fn = graph_rewriter_builder.build(
             configs['graph_rewriter_config'], is_training=is_training)
@@ -392,7 +395,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
       summaries = [] if use_tpu else None
       if train_config.summarize_gradients:
         summaries = ['gradients', 'gradient_norm', 'global_gradient_norm']
-      # *****************************************************18.构造train_op.
+      # *****************************************************18.构造train_op. 还有可以直接使用optimizer的minize方法构造trian_op
       # TODO:这里使用tf.contrib.layers.optimize_loss会不会导致不能并行化
       train_op = tf.contrib.layers.optimize_loss(
           loss=total_loss,
@@ -406,7 +409,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
           name='')  # Preventing scope prefix on all variables.
     # *******************************************************19.终于构建预测的Extimator？Exporter?
     if mode == tf.estimator.ModeKeys.PREDICT:
-      exported_output = exporter_lib.add_output_tensor_nodes(detections)
+      exported_output = exporter_lib.add_output_tensor_nodes(detections)#将postprocess后的detections添加到图中节点
       export_outputs = {
           tf.saved_model.signature_constants.PREDICT_METHOD_NAME:
               tf.estimator.export.PredictOutput(exported_output)
@@ -417,9 +420,11 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
     if mode == tf.estimator.ModeKeys.EVAL:
       class_agnostic = (
           fields.DetectionResultFields.detection_classes not in detections)
+      # *****************************************************22.根据之前的groundtruth_lists，制作goutndtruth
       groundtruth = _prepare_groundtruth_for_eval(
           detection_model, class_agnostic,
           eval_input_config.max_number_of_boxes)
+      # ****************************************************是否使用原始图片来用作验证（original_image和image有什么区别？）
       use_original_images = fields.InputDataFields.original_image in features
       if use_original_images:
         eval_images = features[fields.InputDataFields.original_image]
@@ -449,6 +454,7 @@ def create_model_fn(detection_model_fn, configs, hparams, use_tpu=False):
             eval_input_config.label_map_path)
       vis_metric_ops = None
       if not use_tpu and use_original_images:
+        #   **********************************************23.进行可视化
         eval_metric_op_vis = vis_utils.VisualizeSingleFrameDetections(
             category_index,
             max_examples_to_draw=eval_config.num_visualizations,
